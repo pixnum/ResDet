@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ResDet - Resume Fraud Detector</title>
+<style>
+/* General Styles */
+body {
+    font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;
+    background:#f5f5f5;
+    display:flex;
+    justify-content:center;
+    align-items:flex-start;
+    min-height:100vh;
+    margin:0;
+    padding:2rem;
+    transition: background 0.3s, color 0.3s;
+}
+
+/* Responsive container */
+.container {
+    position:relative;
+    background:#fff;
+    padding:2rem;
+    border-radius:10px;
+    box-shadow:0 4px 15px rgba(0,0,0,0.1);
+    width:100%;
+    max-width:600px;
+    border:1px solid #ccc;
+    margin-top:60px; /* gap from top on desktop */
+    transition: background 0.3s, color 0.3s;
+}
+
+/* Center vertically on small screens */
+@media (max-height:800px) {
+    body {align-items:center;}
+    .container {margin-top:0;}
+}
+
+/* Typography and input styles */
+h2 {text-align:center;margin-bottom:1.5rem;color:#333;transition: color 0.3s;}
+label {margin-bottom:0.25rem;font-weight:500;color:#555;transition: color 0.3s;}
+input, textarea {
+    padding:0.5rem;
+    margin-bottom:1rem;
+    border:1px solid #ccc;
+    border-radius:5px;
+    font-size:0.95rem;
+    width:100%;
+    box-sizing:border-box;
+    background:#fff;
+    color:#000;
+    transition: background 0.3s, color 0.3s, border 0.3s;
+}
+textarea {height:150px;resize:vertical;}
+.result {
+    margin-top:1rem;
+    padding:1rem;
+    border-radius:5px;
+    background:#f0f0f0;
+    font-weight:500;
+    white-space:pre-line;
+    transition: background 0.3s, color 0.3s;
+}
+
+/* Dark Mode Styles */
+body.dark {background:#121212;color:#e0e0e0;}
+body.dark .container {background:#1e1e1e;border:1px solid #555;}
+body.dark input, body.dark textarea {background:#2c2c2c;color:#e0e0e0;border:1px solid #555;}
+body.dark .result {background:#2c2c2c;color:#e0e0e0;}
+body.dark h2,label {color:#e0e0e0;}
+
+/* Dark Mode Toggle Button */
+#darkModeToggle {
+  position:absolute; top:1rem; right:1rem; width:40px; height:40px;
+  border-radius:50%; border:1px solid #888; background:#fff; cursor:pointer;
+  display:flex; justify-content:center; align-items:center; font-weight:bold;
+  transition: background 0.3s, color 0.3s, border 0.3s;
+}
+body.dark #darkModeToggle {background:#333;color:#fff;border:1px solid #aaa;}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.0.0/dist/tf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.12.313/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.4.21/mammoth.browser.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.1.1/dist/tesseract.min.js"></script>
+</head>
+<body>
+
+<div class="container">
+  <!-- Dark Mode Toggle -->
+  <div id="darkModeToggle">🌙</div>
+
+  <h2>ResDet</h2>
+
+  <label for="resumeFile">Upload Resume (PDF, DOCX, PNG, JPEG):</label>
+  <input type="file" id="resumeFile" accept=".pdf,.docx,.png,.jpg,.jpeg">
+
+  <label for="resumeText">Or Paste Resume Text:</label>
+  <textarea id="resumeText" placeholder="Paste your resume text here..."></textarea>
+
+  <div class="result" id="result">Upload or paste a resume to see real-time analysis...</div>
+</div>
+
+<script>
+// Elements
+const fileInput = document.getElementById('resumeFile');
+const resumeText = document.getElementById('resumeText');
+const resultDiv = document.getElementById('result');
+const darkToggle = document.getElementById('darkModeToggle');
+const skillsList=["javascript","python","java","c++","c#","react","node","sql","excel","aws","html","css","docker","kubernetes"];
+const positionsList=["intern","junior","senior","lead","manager","director","ceo","cto"];
+
+// Lightweight ML model
+const model=tf.sequential();
+model.add(tf.layers.dense({units:1,inputShape:[6],activation:'sigmoid'}));
+model.compile({optimizer:'adam',loss:'binaryCrossentropy'});
+const xs=tf.tensor2d([[0,0,0,0,0,0],[1,2,5,3,0,2],[3,5,10,4,1,0]], [3,6]);
+const ys=tf.tensor2d([[0],[1],[1]]);
+model.fit(xs,ys,{epochs:5});
+
+// Debounce helper
+function debounce(func, wait){let timeout; return (...args)=>{clearTimeout(timeout); timeout=setTimeout(()=>func.apply(this,args), wait);};}
+
+// Analyze resume
+async function analyzeResume(text){
+    const lower=text.toLowerCase();
+    let degreeScore = lower.includes("phd")||lower.includes("doctor")?3:
+                      lower.includes("master")?2:
+                      lower.includes("bachelor")?1:0;
+    const skillsCount = skillsList.filter(s=>lower.includes(s)).length;
+    const expMatch=text.match(/(\d+)\s+years?/gi);
+    const experience = expMatch? Math.max(...expMatch.map(x=>parseInt(x))) : 0;
+    const gapMatch=text.match(/gap of (\d+) year/gi);
+    const gaps = gapMatch? Math.max(...gapMatch.map(x=>parseInt(x.match(/\d+/)[0]))) :0;
+    const emailValid = lower.match(/[a-zA-Z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,4}/)?1:0;
+    const positionsCount = positionsList.filter(p=>lower.includes(p)).length;
+
+    const inputTensor = tf.tensor2d([[degreeScore,skillsCount,experience,gaps,emailValid,positionsCount]]);
+    const prediction = model.predict(inputTensor);
+    const riskScore = Math.round((await prediction.data())[0]*100);
+
+    let report=`Degree Score: ${degreeScore}\nSkills Detected: ${skillsCount}\nExperience: ${experience}\nEmployment Gaps: ${gaps}\nPositions Detected: ${positionsCount}\n\n`;
+    report+=`Real-Time ML Risk Score: ${riskScore}%\n`;
+    if(riskScore<=20){report+="Resume seems legitimate."; resultDiv.style.backgroundColor="#d4edda"; resultDiv.style.color="#155724";}
+    else if(riskScore<=50){report+="Potential issues detected."; resultDiv.style.backgroundColor="#fff3cd"; resultDiv.style.color="#856404";}
+    else{report+="High risk of resume fraud."; resultDiv.style.backgroundColor="#f8d7da"; resultDiv.style.color="#721c24";}
+
+    resultDiv.textContent=report;
+}
+
+// OCR for images
+async function extractTextFromImage(file){
+    const { data: { text } } = await Tesseract.recognize(file, 'eng', {logger:m=>console.log(m)});
+    return text;
+}
+
+// File upload handler
+fileInput.addEventListener('change', async ()=>{
+    const file = fileInput.files[0];
+    if(!file){resultDiv.textContent="Upload or paste a resume..."; return;}
+    let textContent='';
+    const ext=file.name.split('.').pop().toLowerCase();
+
+    try{
+        if(ext==='pdf'){
+            const arr = await file.arrayBuffer();
+            const pdf = await pdfjsLib.getDocument(arr).promise;
+            const page = await pdf.getPage(1);
+            const content = await page.getTextContent({normalizeWhitespace:true});
+            textContent = content.items.map(it=>it.str).join(' ');
+        } else if(ext==='docx'){
+            const arr = await file.arrayBuffer();
+            const result = await mammoth.extractRawText({arrayBuffer:arr});
+            textContent = result.value;
+        } else if(ext==='png'||ext==='jpg'||ext==='jpeg'){
+            textContent = await extractTextFromImage(file);
+        } else {resultDiv.textContent="Unsupported file type."; return;}
+    } catch(err){console.error(err); resultDiv.textContent="Failed to read file."; return;}
+    analyzeResume(textContent);
+});
+
+// Debounced live paste
+resumeText.addEventListener('input', debounce(()=>{
+    const text = resumeText.value;
+    if(text.trim()===''){resultDiv.textContent="Upload or paste a resume..."; return;}
+    analyzeResume(text);
+}, 300));
+
+// Dark mode toggle
+darkToggle.addEventListener('click', ()=>{
+    document.body.classList.toggle('dark');
+    darkToggle.textContent = document.body.classList.contains('dark') ? '☀️' : '🌙';
+});
+</script>
+
+</body>
+</html>
